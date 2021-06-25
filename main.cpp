@@ -1,8 +1,10 @@
-
 //ヘッダファイル読み込み
 #include "game.h"		//ゲーム全体のヘッダファイル
 #include "keyboard.h"	//キーボードの処理
 #include "FPS.h"		//FPSの処理
+
+//マクロ定義
+#define TAMA_DIV_MAX	4	//弾の画像の最大数
 
 //構造体の定義
 
@@ -58,28 +60,6 @@ GAME_SCENE GameScene;		//現在のゲームのシーン
 GAME_SCENE OldGameScene;	//前回のゲームのシーン
 GAME_SCENE NextGameScene;	//次のゲームのシーン
 
-//プレイ背景の動画
-MOVIE playMovie;
-
-//プレイヤー
-CHARACTOR player;
-
-//ゴール
-CHARACTOR Goal;
-
-//画像を読み込む
-IMAGE TitleLogo;	//タイトルロゴ
-IMAGE TitleEnter;	//エンターキーを押してね
-IMAGE EndClear;		//クリアロゴ
-
-//音楽
-AUDIO TitleBGM;
-AUDIO PlayBGM;
-AUDIO EndBGM;
-
-//効果音
-AUDIO PlayerSE;
-
 //画面の切り替え
 BOOL IsFadeOut = FALSE;		//フェードアウト
 BOOL IsFadeIn = FALSE;		//フェードイン
@@ -97,10 +77,11 @@ int fadeInCntInit = fadeTimeMax;	//初期値
 int fadeInCnt = fadeInCntInit;		//フェードアウトのカウンタ
 int fadeInCntMax = fadeTimeMax;		//フェードアウトのカウンタMAX
 
-//プッシュエンターの点滅
-int PushEnterCnt = 0;
-int PushEnterCntMAX = 60;
-BOOL PushEnterBrink = FALSE;
+//弾の画像のハンドル
+int Tama[TAMA_DIV_MAX];
+int TamaIndex = 0;     //画像の添字
+int TamaChangeCnt = 0; //画像の変えるタイミング
+int TamaChangeCntMAX = 30;//画像を買えるタイミングMAX
 
 //プロトタイプ宣言
 VOID Title(VOID);		//タイトル画面
@@ -130,6 +111,7 @@ BOOL GameLoad(VOID);	//ゲームのデータを読み込み
 
 BOOL LoadImageMem(IMAGE* image, const char* path);							//ゲームの画像を読み込み
 BOOL LoadAudio(AUDIO* audio, const char* path, int volume, int playType);	//ゲームの音楽を読み込み
+BOOL LoadImageDivMem(int* handle, const char* path, int bunkatuYoko, int bunkatuTate);//ゲームの画像の分割読み込み
 
 VOID GameInit(VOID);	//ゲームのデータの初期化
 
@@ -239,21 +221,8 @@ int WINAPI WinMain(
 		ScreenFlip();	//ダブルバッファリングした画面を描画
 	}
 
-	//終わるときの処理
-	DeleteGraph(playMovie.handle);		//動画をメモリ上から削除
-
-	DeleteGraph(player.img.handle);		//画像をメモリ上から削除
-	DeleteGraph(Goal.img.handle);		//画像をメモリ上から削除
-
-	DeleteGraph(TitleLogo.handle);		//画像をメモリ上から削除
-	DeleteGraph(TitleEnter.handle);		//画像をメモリ上から削除
-	DeleteGraph(EndClear.handle);		//画像をメモリ上から削除
-
-	DeleteSoundMem(TitleBGM.handle);	//音楽をメモリ上から削除
-	DeleteSoundMem(PlayBGM.handle);		//音楽をメモリ上から削除
-	DeleteSoundMem(EndBGM.handle);		//音楽をメモリ上から削除
-
-	DeleteSoundMem(PlayerSE.handle);	//音楽をメモリ上から削除
+	//読み込んだ画像を解放
+	for (int i = 0; i < TAMA_DIV_MAX; i++) { DeleteGraph(Tama[i]); }
 
 	//ＤＸライブラリ使用の終了処理
 	DxLib_End();
@@ -267,17 +236,35 @@ int WINAPI WinMain(
 /// <returns>読み込めたらTRUE / 読み込めなかったらFALSE</returns>
 BOOL GameLoad(VOID)
 {
-	//プレイ動画の背景を読み込み
-	strcpyDx(playMovie.path, ".\\Movie\\PlayMovie.mp4");	//パスのコピー
-	playMovie.handle = LoadGraph(playMovie.path);			//動画の読み込み
+	if(LoadImageDivMem(&Tama[0], ".\\image\\tama.png", 4, 1) == FALSE) {return FALSE; }
 
-	//動画が読み込めなかったときは、エラー(-1)が入る
-	if (playMovie.handle == -1)
+	return TRUE;	//全て読み込みた！
+}
+/// <summary>
+/// 画像を分割してメモリに読み込み
+/// </summary>
+/// <param name="handle">ハンドル配列の先頭アドレス</param>
+/// <param name="path">画像のパス</param>
+/// <param name="bunkatuYoko">分割するときの横の数</param>
+/// <param name="bunkatuTate">分割するときの縦の数</param>
+/// <returns></returns>
+BOOL LoadImageDivMem(int* handle, const char* path, int bunkatuYoko, int bunkatuTate)
+{
+	
+
+	//弾の読み込み
+	int IsTamaLoad = -1;	//画像が読み込みたか？
+
+	//一時的に画像のハンドルを用意する
+	int TamaHandle = LoadGraph(path);
+
+	//読み込みエラー
+	if (TamaHandle == -1)
 	{
 		MessageBox(
-			GetMainWindowHandle(),	//メインのウィンドウハンドル
-			playMovie.path,			//メッセージ本文
-			"動画読み込みエラー！",		//メッセージタイトル
+			GetMainWindowHandle(),	//ウィンドウハンドル
+			path,				//本文
+			"画像読み込みエラー",	//タイトル
 			MB_OK					//ボタン
 		);
 
@@ -285,30 +272,36 @@ BOOL GameLoad(VOID)
 	}
 
 	//画像の幅と高さを取得
-	GetGraphSize(playMovie.handle, &playMovie.width, &playMovie.height);
+	int TamaWidth = -1;		//幅
+	int TamaHeight = -1;	//高さ
+	GetGraphSize(TamaHandle, &TamaWidth, &TamaHeight);
 
-	//動画のボリューム
-	playMovie.Volume = 255;
+	//分割して読み込み
+	IsTamaLoad = LoadDivGraph(
+		path,						//画像のパス
+		TAMA_DIV_MAX,					//分割総数
+		bunkatuYoko, bunkatuTate,							//横の分割,縦の分割
+		TamaWidth / bunkatuYoko, TamaHeight / bunkatuTate,	//画像1つ分の幅,高さ
+		handle						//連続で管理する配列の先頭アドレス
+	);
 
-	//画像を読み込み
-	if (!LoadImageMem(&player.img, ".\\Image\\player.\png")) { return FALSE; }
-	if (!LoadImageMem(&Goal.img, ".\\Image\\goal.\jpg")) { return FALSE; }
+	//分割エラー
+	if (IsTamaLoad == -1)
+	{
+		MessageBox(
+			GetMainWindowHandle(),	//ウィンドウハンドル
+			path,				//本文
+			"画像分割エラー",		//タイトル
+			MB_OK					//ボタン
+		);
 
-	//ロゴを読み込む
-	if (!LoadImageMem(&TitleLogo, ".\\Image\\タイトル!.\png")) { return FALSE; }
-	if (!LoadImageMem(&TitleEnter, ".\\Image\\プッシュエンター.\png")) { return FALSE; }
-	if (!LoadImageMem(&EndClear, ".\\Image\\エンド!.\png")) { return FALSE; }
+		return FALSE;	//読み込み失敗
+	}
 
-	//音楽を読み込む
-	if (!LoadAudio(&TitleBGM, ".\\Audio\\title.mp3", 255, DX_PLAYTYPE_LOOP)) { return FALSE; }
-	if (!LoadAudio(&PlayBGM, ".\\Audio\\play.mp3", 255, DX_PLAYTYPE_LOOP)) { return FALSE; }
-	if (!LoadAudio(&EndBGM, ".\\Audio\\end.mp3", 255, DX_PLAYTYPE_LOOP)) { return FALSE; }
-
-	if (!LoadAudio(&PlayerSE, ".\\Audio\\忍び寄る恐怖.mp3", 255, DX_PLAYTYPE_BACK)) { return FALSE; }
-
-	return TRUE;	//全て読み込みた！
+	//一時的に読み込んだハンドルを解放
+	DeleteGraph(TamaHandle);
+	return TRUE;
 }
-
 
 /// <summary>
 /// 画像をメモリに読み込み
@@ -382,45 +375,6 @@ BOOL LoadAudio(AUDIO* audio, const char* path, int volume, int playType)
 /// <param name=""></param>
 VOID GameInit(VOID)
 {
-	//プレイヤーを初期化
-	player.img.x = GAME_WIDTH / 2 - player.img.width / 2;	//中央寄せ
-	player.img.y = GAME_HEIGHT / 2 - player.img.height / 2;	//中央寄せ
-	player.speed = 500;		//スピード
-	player.img.IsDraw = TRUE;	//描画できる！
-
-	//当たり判定を更新する
-	CollUpdatePlayer(&player);	//プレイヤーの当たり判定のアドレス
-
-	//ゴールを初期化
-	Goal.img.x = GAME_WIDTH - Goal.img.width;
-	Goal.img.y = 0;
-	Goal.speed = 500;	//スピード
-	Goal.img.IsDraw = TRUE;	//描画できる！
-
-	//当たり判定を更新する
-	CollUpdate(&Goal);	//プレイヤーの当たり判定のアドレス
-
-	//タイトルロゴの位置を決める
-	TitleLogo.x = GAME_WIDTH / 2 - TitleLogo.width / 2;   //中央揃え
-	TitleLogo.y = 0;
-
-	//プッシュエンターの位置を決める
-	TitleEnter.x = GAME_WIDTH / 2 - TitleEnter.width / 2;   //中央揃え
-	TitleEnter.y = GAME_HEIGHT / 2 - TitleEnter.height - 100;
-
-	//プッシュエンターの点滅
-	PushEnterCnt = 0;
-
-	PushEnterBrink = FALSE;
-
-	//クリアロゴの位置を決める
-	EndClear.x = GAME_WIDTH / 2 - EndClear.width / 2;   //中央揃え
-	EndClear.y= 0;   //中央揃え
-
-	//プッシュエンターの点滅
-	int PushEnterCnt = 0;
-	int PushEnterCntMAX = 60;
-	BOOL PushEnterBrink = FALSE;
 
 }
 
@@ -456,9 +410,6 @@ VOID TitleProc(VOID)
 
 	if (KeyClick(KEY_INPUT_RETURN) == TRUE)
 	{
-		//BGMを止める
-		StopSoundMem(TitleBGM.handle);
-
 		//シーン切り替え
 		//次のシーンの初期化をここで行うと楽
 
@@ -471,13 +422,6 @@ VOID TitleProc(VOID)
 		return;
 	}
 
-	//BGMが流れていないとき
-	if (CheckSoundMem(TitleBGM.handle) == 0)
-	{
-		//BGMを流す
-		PlaySoundMem(TitleBGM.handle, TitleBGM.playType);
-	}
-
 	return;
 }
 
@@ -486,32 +430,27 @@ VOID TitleProc(VOID)
 /// </summary>
 VOID TitleDraw(VOID)
 {
-	//タイトルロゴの描画
-	DrawGraph(TitleLogo.x, TitleLogo.y, TitleLogo.handle, TRUE);
+	//弾の描画
+	DrawGraph(0, 0, Tama[TamaIndex], TRUE);
 
-	//MAX値まで待つ
-	if (PushEnterCnt < PushEnterCntMAX) { PushEnterCnt++; }
+	if (TamaChangeCnt < TamaChangeCntMAX)
+	{
+		TamaChangeCnt++;
+	}
 	else
 	{
-		if (PushEnterBrink == TRUE)PushEnterBrink = FALSE;
-		else if (PushEnterBrink == FALSE)PushEnterBrink = TRUE;
+		if (TamaIndex < TAMA_DIV_MAX -1)
+		{
+			TamaIndex++;   //次の画像へ
+		}
+		else
+		{
+			TamaIndex = 0;   //最初に戻す
+		}
 
-		PushEnterCnt = 0;
+		TamaChangeCnt = 0;
 	}
-	
-	//プッシュエンターを点滅
-	if (PushEnterBrink == TRUE)
-	{
-		//半透明にする
-		SetDrawBlendMode(DX_BLENDMODE_ALPHA, ((float)(PushEnterCntMAX - PushEnterCnt) / PushEnterCntMAX) * 255);
 
-		//プッシュエンターの描画
-		DrawGraph(TitleEnter.x, TitleEnter.y, TitleEnter.handle, TRUE);
-
-		//半透明終了
-		SetDrawBlendMode(DX_BLENDMODE_NOBLEND, 0);
-	}
-	
 	DrawString(0, 0, "タイトル画面", GetColor(0, 0, 0));
 	return;
 }
@@ -532,83 +471,11 @@ VOID Play(VOID)
 /// </summary>
 VOID PlayProc(VOID)
 {
-	/*
 	if (KeyClick(KEY_INPUT_RETURN) == TRUE)
 	{
-		//シーン切り替え
-		//次のシーンの初期化をここで行うと楽
-
-		//エンド画面に切り替え
-		ChangeScene(GAME_SCENE_END);
-	}
-	*/
-
-	//BGMが流れていないとき
-	if (CheckSoundMem(PlayBGM.handle) == 0)
-	{
-		//BGMを流す
-		PlaySoundMem(PlayBGM.handle, PlayBGM.playType);
-	}
-
-	//プレイヤーの操作
-	if (KeyDown(KEY_INPUT_UP) == TRUE)
-	{
-		player.img.y -= player.speed * fps.DeltaTime;
-
-		//動くときの効果音を追加
-		if (CheckSoundMem(PlayerSE.handle) == 0)
-		{
-			PlaySoundMem(PlayerSE.handle, PlayerSE.playType);
-		}
-	}
-	if (KeyDown(KEY_INPUT_DOWN) == TRUE)
-	{
-		player.img.y += player.speed * fps.DeltaTime;
-
-		//動くときの効果音を追加
-		if (CheckSoundMem(PlayerSE.handle) == 0)
-		{
-			PlaySoundMem(PlayerSE.handle, PlayerSE.playType);
-		}
-	}
-
-	if (KeyDown(KEY_INPUT_LEFT) == TRUE)
-	{
-		player.img.x -= player.speed * fps.DeltaTime;
-
-		//動くときの効果音を追加
-		if (CheckSoundMem(PlayerSE.handle) == 0)
-		{
-			PlaySoundMem(PlayerSE.handle, PlayerSE.playType);
-		}
-	}
-	if (KeyDown(KEY_INPUT_RIGHT) == TRUE)
-	{
-		player.img.x += player.speed * fps.DeltaTime;
-
-		//動くときの効果音を追加
-		if (CheckSoundMem(PlayerSE.handle) == 0)
-		{
-			PlaySoundMem(PlayerSE.handle, PlayerSE.playType);
-		}
-	}
-
-	//当たり判定を更新する
-	CollUpdatePlayer(&player);
-
-	//ゴールの当たり判定を更新する
-	CollUpdate(&Goal);
-
-	//プレイヤーがゴールに当たったときは
-	if (OnCollRect(player.coll, Goal.coll) == TRUE)
-	{
-		//BGMを止める
-		StopSoundMem(PlayBGM.handle);
-
-		//エンド画面に切り替え
+		//プレイ画面に切り替え
 		ChangeScene(GAME_SCENE_END);
 
-		//処理を強制終了
 		return;
 	}
 
@@ -620,47 +487,6 @@ VOID PlayProc(VOID)
 /// </summary>
 VOID PlayDraw(VOID)
 {
-	//背景動画を描画
-
-	//もし、動画が再生されていないとき
-	if (GetMovieStateToGraph(playMovie.handle) == 0)
-	{
-		//再生する
-		SeekMovieToGraph(playMovie.handle, 0);	//シークバーを最初に戻す
-		PlayMovieToGraph(playMovie.handle);		//動画を再生
-	}
-	//動画を描画(画像を引き伸ばす)
-	DrawExtendGraph(0, 0, GAME_WIDTH, GAME_HEIGHT, playMovie.handle, TRUE);
-
-	//プレイヤーを描画
-	if (player.img.IsDraw == TRUE)
-	{
-		//画像を描画
-		DrawGraph(player.img.x, player.img.y, player.img.handle, TRUE);
-
-		//デバッグのときは、当たり判定の領域を描画
-		if (GAME_DEBUG == TRUE)
-		{
-			//四角を描画
-			DrawBox(player.coll.left, player.coll.top, player.coll.right, player.coll.bottom,
-				GetColor(255, 0, 0), FALSE);
-		}
-	}
-
-	//ゴールを描画
-	if (Goal.img.IsDraw == TRUE)
-	{
-		//画像を描画
-		DrawGraph(Goal.img.x, Goal.img.y, Goal.img.handle, TRUE);
-
-		//デバッグのときは、当たり判定の領域を描画
-		if (GAME_DEBUG == TRUE)
-		{
-			//四角を描画
-			DrawBox(Goal.coll.left, Goal.coll.top, Goal.coll.right, Goal.coll.bottom,
-				GetColor(255, 0, 0), FALSE);
-		}
-	}
 
 	DrawString(0, 0, "プレイ画面", GetColor(0, 0, 0));
 	return;
@@ -684,23 +510,10 @@ VOID EndProc(VOID)
 {
 	if (KeyClick(KEY_INPUT_RETURN) == TRUE)
 	{
-		//シーン切り替え
-		//次のシーンの初期化をここで行うと楽
-
-		//BGMを止める
-		StopSoundMem(EndBGM.handle);
-
 		//タイトル画面に切り替え
 		ChangeScene(GAME_SCENE_TITLE);
 
 		return;
-	}
-
-	//BGMが流れていないとき
-	if (CheckSoundMem(EndBGM.handle) == 0)
-	{
-		//BGMを流す
-		PlaySoundMem(EndBGM.handle, EndBGM.playType);
 	}
 
 	return;
@@ -711,9 +524,6 @@ VOID EndProc(VOID)
 /// </summary>
 VOID EndDraw(VOID)
 {
-	//エンドの描画
-	DrawGraph(EndClear.x, EndClear.y, EndClear.handle, TRUE);
-
 	DrawString(0, 0, "エンド画面", GetColor(0, 0, 0));
 	return;
 }
