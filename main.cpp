@@ -5,6 +5,7 @@
 
 //マクロ定義
 #define TAMA_DIV_MAX	4	//弾の画像の最大数
+#define TAMA_MAX        10  //弾の総数
 
 //構造体の定義
 
@@ -54,6 +55,33 @@ struct AUDIO
 	int playType = -1;	//BGM or SE
 };
 
+//弾の構造体
+struct TAMA
+{
+	int handle[TAMA_DIV_MAX];  //画像のハンドル
+	char path[255]; //画像のパス
+
+	int DivTate;   //分割数(縦)
+	int DivYoko;   //分割数(横)
+	int DivMAX;    //分割総数
+
+	int AnimeCnt = 0;   //アニメーションカウンタ
+	int AnimeCntMAX = 0;//アニメーションカウンタMAX
+
+	int NowIndex = 0;   //現在の画像の要素数
+
+	int x;				//X位置
+	int y;				//Y位置
+	int width;			//幅
+	int height;			//高さ
+
+	int speed;         //速度
+
+	RECT coll;         // 当たり判定
+
+	BOOL IsDraw = FALSE;//描画できる?
+};
+
 //グローバル変数
 //シーンを管理する変数
 GAME_SCENE GameScene;		//現在のゲームのシーン
@@ -77,11 +105,9 @@ int fadeInCntInit = fadeTimeMax;	//初期値
 int fadeInCnt = fadeInCntInit;		//フェードアウトのカウンタ
 int fadeInCntMax = fadeTimeMax;		//フェードアウトのカウンタMAX
 
-//弾の画像のハンドル
-int Tama[TAMA_DIV_MAX];
-int TamaIndex = 0;     //画像の添字
-int TamaChangeCnt = 0; //画像の変えるタイミング
-int TamaChangeCntMAX = 30;//画像を買えるタイミングMAX
+//弾の構造体変数
+struct TAMA tama_moto;  //元
+struct TAMA tama[TAMA_MAX];    //実際に使う
 
 //プロトタイプ宣言
 VOID Title(VOID);		//タイトル画面
@@ -104,6 +130,7 @@ VOID ChangeScene(GAME_SCENE scene);	//シーン切り替え
 
 VOID CollUpdatePlayer(CHARACTOR* chara);	//当たり判定の領域を更新
 VOID CollUpdate(CHARACTOR* chara);			//当たり判定
+VOID CollUpdateTAMA(CHARACTOR* chara);      //弾の当たり判定の更新
 
 BOOL OnCollRect(RECT a, RECT b);			//矩形と矩形の当たり判定
 
@@ -114,6 +141,8 @@ BOOL LoadAudio(AUDIO* audio, const char* path, int volume, int playType);	//ゲー
 BOOL LoadImageDivMem(int* handle, const char* path, int bunkatuYoko, int bunkatuTate);//ゲームの画像の分割読み込み
 
 VOID GameInit(VOID);	//ゲームのデータの初期化
+
+VOID DrawTama(TAMA* tama);//弾の描画
 
 // プログラムは WinMain から始まります
 //Windowsのプログラミング方法 = (WinAPI)で動いている！
@@ -222,7 +251,7 @@ int WINAPI WinMain(
 	}
 
 	//読み込んだ画像を解放
-	for (int i = 0; i < TAMA_DIV_MAX; i++) { DeleteGraph(Tama[i]); }
+	for (int i = 0; i < TAMA_DIV_MAX; i++) { DeleteGraph(tama_moto.handle[i]); }
 
 	//ＤＸライブラリ使用の終了処理
 	DxLib_End();
@@ -236,7 +265,30 @@ int WINAPI WinMain(
 /// <returns>読み込めたらTRUE / 読み込めなかったらFALSE</returns>
 BOOL GameLoad(VOID)
 {
-	if(LoadImageDivMem(&Tama[0], ".\\image\\tama.png", 4, 1) == FALSE) {return FALSE; }
+	//弾の分割を設定
+	tama_moto.x = 4;
+	tama_moto.y = 1;
+
+	//弾のパス
+	strcpyDx(tama_moto.path, ".\\image\\dan_blue.png")
+	if(LoadImageDivMem(&tama_moto.handle[0], tama_moto.path,tama_moto.x,tama_moto.y) == FALSE) {return FALSE; }
+
+	tama_moto.x = GAME_WIDTH / 2 - tama_moto.width / 2;
+	tama_moto.y = GAME_HEIGHT - tama_moto.height;
+
+	tama_moto.speed = 1;    //速度
+
+	//当たり判定の更新
+	CollUpdateTAMA(&tama_moto);
+
+	//画像を表示しない
+	tama_moto.IsDraw = FALSE;
+
+	//全ての弾に情報をコピー
+	for (int i = 0; i < TAMA_MAX; i++)
+	{
+		tama[i] = tama_moto;
+	}
 
 	return TRUE;	//全て読み込みた！
 }
@@ -430,25 +482,27 @@ VOID TitleProc(VOID)
 /// </summary>
 VOID TitleDraw(VOID)
 {
-	//弾の描画
-	DrawGraph(0, 0, Tama[TamaIndex], TRUE);
+	DrawTama(&tama[0]);
 
-	if (TamaChangeCnt < TamaChangeCntMAX)
+	//弾の描画
+	DrawGraph(0, 0, tama->handle[tama->NowIndex], TRUE);
+
+	if (tama->AnimeCnt < tama->AnimeCntMAX)
 	{
-		TamaChangeCnt++;
+		tama->AnimeCnt++;
 	}
 	else
 	{
-		if (TamaIndex < TAMA_DIV_MAX -1)
+		if (tama->NowIndex < TAMA_DIV_MAX -1)
 		{
-			TamaIndex++;   //次の画像へ
+			tama->NowIndex++;   //次の画像へ
 		}
 		else
 		{
-			TamaIndex = 0;   //最初に戻す
+			tama->NowIndex = 0;   //最初に戻す
 		}
 
-		TamaChangeCnt = 0;
+		tama->AnimeCnt = 0;
 	}
 
 	DrawString(0, 0, "タイトル画面", GetColor(0, 0, 0));
@@ -651,13 +705,28 @@ VOID CollUpdatePlayer(CHARACTOR* chara)
 /// 当たり判定の領域更新
 /// </summary>
 /// <param name="chara">当たり判定の領域</param>
-VOID CollUpdate(CHARACTOR* chara)
+VOID CollUpdateTAMA(TAMA* tama)
 {
-	chara->coll.left = chara->img.x;
-	chara->coll.top = chara->img.y;
+	tama->coll.left = tama->x;
+	tama->coll.top = tama->y;
 
-	chara->coll.right = chara->img.x + chara->img.width;
-	chara->coll.bottom = chara->img.y + chara->img.height;
+	tama->coll.right = tama->x + tama->width;
+	tama->coll.bottom = tama->y + tama->height;
+
+	return;
+}
+
+/// <summary>
+/// 当たり判定の領域更新(弾)
+/// </summary>
+/// <param name="chara">当たり判定の領域</param>
+VOID CollUpdate(TAMA* tama)
+{
+	tama->coll.left = tama->x;
+	tama->coll.top = tama->y;
+
+	tama->coll.right = tama->x + tama->width;
+	tama->coll.bottom = tama->y + tama->height;
 
 	return;
 }
